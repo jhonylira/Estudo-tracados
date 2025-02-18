@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Estudo de Traçados - Jaraguá do Sul</title>
+    <script src='https://api.mapbox.com/mapbox-gl-js/v2.9.2/mapbox-gl.js'></script>
+    <link href='https://api.mapbox.com/mapbox-gl-js/v2.9.2/mapbox-gl.css' rel='stylesheet' />
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { position: absolute; top: 0; bottom: 0; width: 70%; }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            z-index: 1;
+        }
+        .controls button { margin: 5px; padding: 8px 12px; cursor: pointer; }
+        .controls button:hover { background: #f0f0f0; }
+        .routes-list {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            width: 25%;
+            max-height: 80vh;
+            overflow-y: auto;
+            z-index: 1;
+        }
+        .route-item {
+            margin: 5px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .route-item:hover {
+            background: #f0f0f0;
+        }
+        .route-item input {
+            width: 80%;
+            padding: 5px;
+            margin-bottom: 5px;
+        }
+        .layer-control {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            z-index: 1;
+        }
+        .modal-control {
+            position: absolute;
+            bottom: 80px;
+            left: 20px;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            z-index: 1;
+        }
+    </style>
+</head>
+<body>
+    <!-- Controles -->
+    <div class="controls">
+        <button id="startBtn">Definir Ponto Inicial</button>
+        <button id="endBtn">Definir Ponto Final</button>
+        <button id="calculateRoute">Calcular Rota</button>
+    </div>
+
+    <!-- Lista de Rotas -->
+    <div class="routes-list">
+        <h3>Rotas Calculadas</h3>
+        <div id="routesContainer"></div>
+    </div>
+
+    <!-- Controle de Camadas -->
+    <div class="layer-control">
+        <button id="toggleSatellite">Ativar Satélite</button>
+    </div>
+
+    <!-- Controle de Modal -->
+    <div class="modal-control">
+        <label for="transportMode">Modal de Transporte:</label>
+        <select id="transportMode">
+            <option value="driving">Carro</option>
+            <option value="walking">A Pé</option>
+            <option value="cycling">Bicicleta</option>
+            <option value="driving-traffic">Trânsito (Carro)</option>
+        </select>
+        <button id="updateRoute">Atualizar Rota</button>
+    </div>
+
+    <!-- Mapa -->
+    <div id="map"></div>
+
+    <script>
+        // Configuração do Mapbox
+        mapboxgl.accessToken = 'pk.eyJ1IjoiYXJxamhvbnlsaXJhIiwiYSI6ImNtMDVtM3plYzBkeDcybG9oMmt1cHdrNWsifQ.1zZtn2H7Z9omfLIdqXykNw'; // Substitua pelo seu token do Mapbox
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/streets-v12',
+            center: [-49.0691, -26.4859], // Coordenadas de Jaraguá do Sul
+            zoom: 12
+        });
+
+        // Variáveis para armazenar pontos inicial e final
+        let startPoint = null;
+        let endPoint = null;
+
+        // Lista de rotas calculadas
+        let routes = [];
+        let routeCounter = 1;
+
+        // Cores para as rotas
+        const routeColors = ['#ff0000', '#00ff00', '#0000ff', '#ff00ff', '#00ffff', '#ffff00'];
+
+        // Rota selecionada para atualização
+        let selectedRouteId = null;
+
+        // Adicionar marcadores ao mapa
+        document.getElementById('startBtn').addEventListener('click', () => {
+            map.once('click', (e) => {
+                if (startPoint) map.removeLayer('start-marker');
+                startPoint = e.lngLat;
+                new mapboxgl.Marker({ color: 'green' })
+                    .setLngLat(startPoint)
+                    .addTo(map);
+            });
+        });
+
+        document.getElementById('endBtn').addEventListener('click', () => {
+            map.once('click', (e) => {
+                if (endPoint) map.removeLayer('end-marker');
+                endPoint = e.lngLat;
+                new mapboxgl.Marker({ color: 'red' })
+                    .setLngLat(endPoint)
+                    .addTo(map);
+            });
+        });
+
+        // Calcular rota
+        document.getElementById('calculateRoute').addEventListener('click', async () => {
+            if (!startPoint || !endPoint) return alert('Defina os pontos inicial e final!');
+
+            const transportMode = document.getElementById('transportMode').value;
+            const route = await calculateRoute(startPoint, endPoint, transportMode);
+
+            if (route) {
+                // Adicionar rota à lista
+                const routeColor = routeColors[(routeCounter - 1) % routeColors.length];
+                routes.push({
+                    id: routeCounter,
+                    name: `Rota ${routeCounter}`,
+                    geometry: route.geometry,
+                    distance: (route.distance / 1000).toFixed(2),
+                    duration: (route.duration / 60).toFixed(2),
+                    color: routeColor,
+                    visible: true,
+                    transportMode: transportMode
+                });
+
+                // Adicionar rota ao mapa
+                map.addLayer({
+                    id: `route-${routeCounter}`,
+                    type: 'line',
+                    source: {
+                        type: 'geojson',
+                        data: {
+                            type: 'Feature',
+                            properties: {},
+                            geometry: route.geometry
+                        }
+                    },
+                    paint: { 'line-color': routeColor, 'line-width': 4 }
+                });
+
+                // Atualizar lista de rotas
+                updateRoutesList();
+
+                // Incrementar contador de rotas
+                routeCounter++;
+            } else {
+                alert('Nenhuma rota encontrada.');
+            }
+        });
+
+        // Atualizar rota selecionada
+        document.getElementById('updateRoute').addEventListener('click', async () => {
+            if (!selectedRouteId) return alert('Selecione uma rota para atualizar.');
+
+            const transportMode = document.getElementById('transportMode').value;
+            const route = routes.find(r => r.id === selectedRouteId);
+
+            if (route) {
+                const newRoute = await calculateRoute(startPoint, endPoint, transportMode);
+
+                if (newRoute) {
+                    // Atualizar rota no mapa
+                    map.getSource(`route-${route.id}`).setData({
+                        type: 'Feature',
+                        properties: {},
+                        geometry: newRoute.geometry
+                    });
+
+                    // Atualizar informações da rota
+                    route.geometry = newRoute.geometry;
+                    route.distance = (newRoute.distance / 1000).toFixed(2);
+                    route.duration = (newRoute.duration / 60).toFixed(2);
+                    route.transportMode = transportMode;
+
+                    // Atualizar lista de rotas
+                    updateRoutesList();
+                }
+            }
+        });
+
+        // Função para calcular rota
+        async function calculateRoute(start, end, profile) {
+            const response = await fetch(
+                `https://api.mapbox.com/directions/v5/mapbox/${profile}/${start.lng},${start.lat};${end.lng},${end.lat}?geometries=geojson&access_token=${mapboxgl.accessToken}`
+            );
+            const data = await response.json();
+            return data.routes && data.routes.length > 0 ? data.routes[0] : null;
+        }
+
+        // Atualizar lista de rotas
+        function updateRoutesList() {
+            const routesContainer = document.getElementById('routesContainer');
+            routesContainer.innerHTML = '';
+
+            routes.forEach((route) => {
+                const routeItem = document.createElement('div');
+                routeItem.className = 'route-item';
+                routeItem.innerHTML = `
+                    <input type="text" value="${route.name}" onchange="renameRoute(${route.id}, this.value)" />
+                    <span>Distância: ${route.distance} km</span><br>
+                    <span>Duração: ${route.duration} minutos</span><br>
+                    <span>Modal: ${getTransportModeName(route.transportMode)}</span><br>
+                    <button onclick="toggleRouteVisibility(${route.id})">${route.visible ? 'Ocultar' : 'Mostrar'}</button>
+                    <button onclick="selectRoute(${route.id})">Selecionar</button>
+                `;
+                routeItem.style.borderLeft = `5px solid ${route.color}`;
+                routeItem.addEventListener('click', () => {
+                    highlightRoute(route.id);
+                });
+                routesContainer.appendChild(routeItem);
+            });
+        }
+
+        // Renomear rota
+        window.renameRoute = function (routeId, newName) {
+            const route = routes.find(r => r.id === routeId);
+            if (route) route.name = newName;
+            updateRoutesList();
+        };
+
+        // Alternar visibilidade da rota
+        window.toggleRouteVisibility = function (routeId) {
+            const route = routes.find(r => r.id === routeId);
+            if (route) {
+                route.visible = !route.visible;
+                map.setLayoutProperty(`route-${routeId}`, 'visibility', route.visible ? 'visible' : 'none');
+                updateRoutesList();
+            }
+        };
+
+        // Selecionar rota para atualização
+        window.selectRoute = function (routeId) {
+            selectedRouteId = routeId;
+            alert(`Rota ${routeId} selecionada para atualização.`);
+        };
+
+        // Destacar rota no mapa
+        function highlightRoute(routeId) {
+            routes.forEach((route) => {
+                if (route.id === routeId) {
+                    map.setPaintProperty(`route-${route.id}`, 'line-width', 6);
+                } else {
+                    map.setPaintProperty(`route-${route.id}`, 'line-width', 4);
+                }
+            });
+        }
+
+        // Alternar camada de satélite
+        document.getElementById('toggleSatellite').addEventListener('click', () => {
+            const isSatellite = map.getStyle().name === 'Satellite';
+            map.setStyle(isSatellite ? 'mapbox://styles/mapbox/streets-v12' : 'mapbox://styles/mapbox/satellite-v9');
+            document.getElementById('toggleSatellite').textContent = isSatellite ? 'Ativar Satélite' : 'Desativar Satélite';
+        });
+
+        // Obter nome do modal de transporte
+        function getTransportModeName(mode) {
+            switch (mode) {
+                case 'driving': return 'Carro';
+                case 'walking': return 'A Pé';
+                case 'cycling': return 'Bicicleta';
+                case 'driving-traffic': return 'Trânsito (Carro)';
+                default: return 'Desconhecido';
+            }
+        }
+
+        // Adicionar camadas de topografia e hidrografia
+        map.on('load', () => {
+            // Topografia
+            map.addSource('mapbox-dem', {
+                type: 'raster-dem',
+                url: 'mapbox://mapbox.terrain-rgb'
+            });
+            map.setTerrain({ 'source': 'mapbox-dem', 'exaggeration': 1.5 });
+
+            // Hidrografia
+            map.addLayer({
+                id: 'water',
+                type: 'fill',
+                source: {
+                    type: 'vector',
+                    url: 'mapbox://mapbox.mapbox-streets-v8'
+                },
+                'source-layer': 'water',
+                paint: { 'fill-color': '#00ffff' }
+            });
+        });
+    </script>
+</body>
+</html>
